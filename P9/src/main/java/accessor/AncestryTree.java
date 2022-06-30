@@ -117,7 +117,7 @@ public class AncestryTree {
      * @return hash value for given block
      * @throws IOException
      */
-    public static String getKeyForBlockHeight(String block) throws IOException {
+    private static String getKeyForBlockHeight(String block) throws IOException {
         return ConnectionRequest.getResponse(Constants.BLOCK_URL + block);
     }
 }
