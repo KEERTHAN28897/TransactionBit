@@ -11,86 +11,29 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 
 public class AncestryTree {
-
-    private final Map<String, Integer> parentCount = new HashMap<>();
-    private final Map<String, Integer> parentAncestorsCount = new HashMap<>();
-    private final Map<String, List<TransactionFlow>> parentToChild = new HashMap<>();
-
+    
     private final List<Transaction> allTransactions = new ArrayList<>();
 
     private final Map<String, Integer> directParentCount = new HashMap<>();
     private final Map<String, List<String>> directParentMap = new HashMap<>();
     private final Map<String, Boolean> transactionMap = new HashMap<>();
+    
+    private final Map<String, Integer> totCount = new HashMap<>();
 
-    private Set<String> rootNodes = new HashSet<>();
 
     /**
-     * fetch() for given offset, get all the elements and add in map
-     * @throws IOException
+     * print top 10 transactions.
      */
-
-    private void fetch() throws IOException {
-        String key = getKeyForBlockHeight(Constants.BLOCK);
-        int index = 0;
-
-        while(index <= 2874) {
-            String response = ConnectionRequest.getResponse(Constants.BLOCKSTREAM_URL + key + "/txs/" +
-                    String.valueOf(index));
-
-            Gson gson = new GsonBuilder().create();
-            Transaction[] transaction = gson.fromJson(response, Transaction[].class);
-            allTransactions.addAll(new ArrayList<>(List.of(transaction)));
-            for(int i = 0; i < transaction.length; ++i) {
-                ++index;
-                transactionMap.put(transaction[i].getTxid(), true);
-            }
-        }
-
-        for(Transaction transaction : allTransactions) {
-            List<TransactionFlow> children = transaction.getVin();
-            for(TransactionFlow child : children) {
-                if(transactionMap.containsKey(child.getTxid()) &&
-                        transactionMap.get(child.getTxid()) &&
-                        transaction.getTxid() != child.getTxid()) {
-                    int count = directParentCount.getOrDefault(transaction.getTxid(), 0);
-                    directParentCount.put(transaction.getTxid(), ++count);
-                    List<String> transactions = directParentMap.getOrDefault(transaction.getTxid(), new ArrayList<>());
-                    transactions.add(child.getTxid());
-                    directParentMap.put(transaction.getTxid(), transactions);
-                }
-            }
-        }
-        System.out.println("Length of all transactions: " + directParentMap.size());
-
-
-        Map<String, Integer> totCount = new HashMap<>();
-
-        for(String child : directParentMap.keySet()) {
-
-            Queue<String> searchQueue = new LinkedList<>();
-            searchQueue.add(child);
-            while (searchQueue.isEmpty() == false) {
-                totCount.put(child, totCount.getOrDefault(child, 0) + directParentCount.getOrDefault(searchQueue.peek(), 0));
-                List<String> parents = directParentMap.getOrDefault(searchQueue.peek(), new ArrayList<>());
-                for (String next : parents) {
-                    searchQueue.add(next);
-                }
-
-                searchQueue.remove();
-            }
-        }
-
+    private void printTopTransactions() {
         Map<String, Integer> sortedMap = totCount.entrySet().stream()
                 .sorted(Comparator.comparingInt(e -> -e.getValue()))
                 .collect(Collectors.toMap(
@@ -107,7 +50,68 @@ public class AncestryTree {
                 break;
             }
         }
+    }
 
+    /**
+     * map all direct and indirect parents
+     * total parents would be = direct parents + indirect parents.
+     */
+    private void mapDirectAndIndirectParents() {
+        for(String child : directParentMap.keySet()) {
+            Queue<String> searchQueue = new LinkedList<>();
+            searchQueue.add(child);
+            while (searchQueue.isEmpty() == false) {
+                totCount.put(child, totCount.getOrDefault(child, 0) + directParentCount.getOrDefault(searchQueue.peek(), 0));
+                List<String> parents = directParentMap.getOrDefault(searchQueue.peek(), new ArrayList<>());
+                for (String next : parents) {
+                    searchQueue.add(next);
+                }
+                searchQueue.remove();
+            }
+        }
+    }
+
+
+    /**
+     * add all DirectParents to a child
+     */
+    private void addAllDirectParents() {
+        for(Transaction transaction : allTransactions) {
+            List<TransactionFlow> children = transaction.getVin();
+            for(TransactionFlow child : children) {
+                if(transactionMap.containsKey(child.getTxid()) &&
+                        transactionMap.get(child.getTxid()) &&
+                        transaction.getTxid() != child.getTxid()) {
+                    int count = directParentCount.getOrDefault(transaction.getTxid(), 0);
+                    directParentCount.put(transaction.getTxid(), ++count);
+                    List<String> transactions = directParentMap.getOrDefault(transaction.getTxid(), new ArrayList<>());
+                    transactions.add(child.getTxid());
+                    directParentMap.put(transaction.getTxid(), transactions);
+                }
+            }
+        }
+    }
+
+    /**
+     * fetchRequiredDetails() for given offset, get all the elements and add in map
+     * @throws IOException
+     */
+    private void fetchRequiredDetails() throws IOException {
+        String key = getKeyForBlockHeight(Constants.BLOCK);
+        int index = 0;
+
+        //TODO: This should not be hardcoded
+        while(index <= 2874) {
+            String response = ConnectionRequest.getResponse(Constants.BLOCKSTREAM_URL + key + "/txs/" +
+                    String.valueOf(index));
+            Gson gson = new GsonBuilder().create();
+            Transaction[] transaction = gson.fromJson(response, Transaction[].class);
+            allTransactions.addAll(new ArrayList<>(List.of(transaction)));
+            for(int i = 0; i < transaction.length; ++i) {
+                ++index;
+                transactionMap.put(transaction[i].getTxid(), true);
+            }
+        }
     }
 
 
@@ -117,49 +121,13 @@ public class AncestryTree {
      * @return top 10 transaction with most ancestors
      * @throws IOException
      */
-
-    public List<String> getTopTenTransactions() throws IOException {
+    public void getTopTenTransactions() throws IOException {
         //start with rootNode and add indirect ancestors.
-        fetch();
-        while(rootNodes.size() > 0) {
-            List<String> currNodes = new ArrayList<>();
-            for (String root : rootNodes) {
-                List<TransactionFlow> transactionFlows = parentToChild.getOrDefault(root, new ArrayList<>());
-                for (TransactionFlow transactionFlow : transactionFlows) {
-                    Integer count = parentAncestorsCount.getOrDefault(transactionFlow.getTxid(), 0);
-                    parentAncestorsCount.put(transactionFlow.getTxid(), ++count);
-                    parentCount.put(transactionFlow.getTxid(), parentCount.get(transactionFlow.getTxid()));
-                    if (parentCount.get(transactionFlow.getTxid()) == 0) {
-                        parentCount.remove(transactionFlow.getTxid());
-                        currNodes.add(transactionFlow.getTxid());
-                    }
-                }
-
-            }
-            rootNodes.addAll(currNodes);
-        }
-
-        Map<String, Integer> sortedMap = parentAncestorsCount.entrySet().stream()
-                .sorted(Comparator.comparingInt(e -> -e.getValue()))
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        Map.Entry::getValue,
-                        (a, b) -> { throw new AssertionError(); },
-                        LinkedHashMap::new
-                ));
-
-        int n = 10;
-        List<String> result = new ArrayList<>();
-
-        for(String res : sortedMap.keySet()) {
-            System.out.println(res);
-            if(n == 0) {
-                break;
-            }
-
-            result.add(res);
-        }
-        return result;
+        fetchRequiredDetails();
+        addAllDirectParents();
+        System.out.println("Length of all transactions: " + directParentMap.size());
+        mapDirectAndIndirectParents();
+        printTopTransactions();
     }
 
     /**
